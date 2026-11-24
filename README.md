@@ -1,4 +1,4 @@
-## Advanced Electronic Guidance & Interface System (007)
+## Advanced Electronic Guidance & Interface System (AEGIS 007)
 
 Um HUD de avião, como aqueles que aparecem na frente do piloto. Cada pixel da tela é calculado na hora, em lógica digital, enquanto o monitor varre a imagem. Os instrumentos reagem a sensores reais ligados na placa:
 
