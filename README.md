@@ -1,4 +1,4 @@
-## O que é este projeto
+## Advanced Electronic Guidance & Interface System (007)
 
 Um HUD de avião, como aqueles que aparecem na frente do piloto. Cada pixel da tela é calculado na hora, em lógica digital, enquanto o monitor varre a imagem. Os instrumentos reagem a sensores reais ligados na placa:
 
@@ -196,7 +196,7 @@ Os dois scripts seguem o roteiro dos slides da disciplina (síntese em TCL).
 ### Requisitos
 
 - **Vivado** instalado (testado na 2024.2). A FPGA do projeto é a `xc7a100tcsg324-1`.
-- Para gravar: placa ligada no USB (porta PROG/UART) e chave de energia ligada.
+- Para gravar: placa ligada no USB e chave de energia ligada.
 
 ### 1) Gerar o `hudTop.bit` — `build.tcl`
 
@@ -229,15 +229,6 @@ Ficam em `build/reports/`:
 | `timing.rpt` | Timing final (**WNS positivo = fechou**) |
 | `power.rpt` | Potência estimada final |
 
-<details>
-<summary><b>Problemas comuns</b></summary>
-
-- **`vivado` não é reconhecido:** o terminal não achou o programa. 
-- **`ERRO: a sintese falhou`:** abra `build/hud.runs/synth_1/runme.log` e procure por `ERROR`.
-- **`ERRO: a implementacao falhou`:** abra `build/hud.runs/impl_1/runme.log`. Costuma ser pino errado ou faltando no `.xdc`.
-- **`program.tcl` sem achar a placa:** confira o cabo USB, a chave de energia e os drivers do cabo. No Linux, instale as regras udev do cabo Digilent.
-
-</details>
 
 ---
 
@@ -304,12 +295,12 @@ Cadeia: cartão → `sdSpiByte` → `sdVideoReader` → framebuffer (2 quadros e
 | `SD_DAT0` | C2 | MISO: cartão → FPGA (com pull-up) |
 | `SD_DAT3` | D2 | CS: 0 = cartão ativo |
 
-**Preparar o cartão (não precisa de administrador):**
+**Preparar o cartão:**
 1. Monte um arquivo `VIDEO.BIN` no formato abaixo (320×240, 1 byte por pixel, RGB332). O gerador do vídeo não faz parte do repositório.
 2. Formate o microSD em **FAT32** (no PC ou no celular, como "armazenamento portátil").
 3. Copie **só** o `VIDEO.BIN`, logo depois de formatar, e ejete com segurança. Não use o cartão para mais nada.
 
-**Como a placa acha o vídeo:** ela não lê o FAT. Num cartão recém-formatado o primeiro arquivo copiado fica em setores seguidos, então o `sdVideoReader` lê o cartão desde o setor 0 (leitura contínua, `CMD18`) até achar o setor que começa com `AEL_HUD_VIDEO_V1` (procura nos primeiros 128 MB, leva alguns segundos). Os quadros vêm logo depois: 150 setores cada. No último quadro ele manda `CMD12` e recomeça do primeiro.
+**Como a placa acha o vídeo:** Num cartão recém-formatado o primeiro arquivo copiado fica em setores seguidos, então o `sdVideoReader` lê o cartão desde o setor 0 (leitura contínua, `CMD18`) até achar o setor que começa com `AEL_HUD_VIDEO_V1` (procura nos primeiros 128 MB, leva alguns segundos). Os quadros vêm logo depois: 150 setores cada. No último quadro ele manda `CMD12` e recomeça do primeiro.
 
 <p align="center">
   <img src="docs/video_cartao.svg" alt="Como o vídeo fica no cartão: cabeçalho de 1 setor seguido dos quadros de 150 setores" width="100%">
@@ -329,10 +320,6 @@ Cada quadro é 320×240 pixels, 1 byte por pixel (`RRRGGGBB`). O HUD repete os b
 
 **Na tela:** o quadro é ampliado 2× (cada pixel vira 2×2). Enquanto um quadro aparece, o próximo é escrito no outro buffer, e a troca só acontece no começo do apagamento vertical, então a imagem nunca rasga. A 15 fps cada quadro fica 4 quadros VGA na tela. O SPI a 12,5 MHz lê um quadro em ~55 ms: se o cartão demorar mais, o vídeo só fica mais lento.
 
-**Se der erro** (sem cartão, cartão sem o vídeo), o leitor desliga o cartão, espera ~1 s e tenta de novo, então dá para colocar o cartão com a placa ligada. Enquanto desligado, todas as linhas ficam em 0.
-
-**A mira tremeu depois de ligar o vídeo?** O cartão e o VGA com imagem em movimento puxam corrente em rajadas, e o joystick é alimentado pelos mesmos 3,3 V da placa, então o ruído pode entrar na leitura do XADC. O `xadcReader` filtra a leitura devagar (constante de tempo ~2 ms) para isso. Se ainda sobrar tremida, ligue um capacitor de 100 nF entre o ponto **N** de cada eixo e o GND. Para descobrir de onde vem o ruído: com `SW4 = 0` o VGA fica parado, mas o cartão continua lendo; se só treme com `SW4 = 1`, é o VGA; se treme nos dois, é o cartão.
-
 Parâmetros de ajuste: `SEARCH_LIMIT` (no `sdVideoReader`, quantos setores procurar), `SLOW_HALF` (no `sdSpiByte`, velocidade da inicialização).
 </details>
 
@@ -341,11 +328,6 @@ Parâmetros de ajuste: `SEARCH_LIMIT` (no `sdVideoReader`, quantos setores procu
 
 Com `SW14 = 1`, só o retículo central e a linha do horizonte são desenhados. Altitude, bússola e mira ficam escondidas (os cálculos continuam rodando, só o desenho some).
 </details>
-
----
-
-## Próximos passos
-- Testar o vídeo do cartão na placa e conferir se a mira continua firme.
 
 ---
 
