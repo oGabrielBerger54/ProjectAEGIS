@@ -236,9 +236,8 @@ assign LED1 = baroOk;
 
 logic signed [11:0] baroAltOffset;
 
-// Sem zeroRef por enquanto (1'b0): a altura "zero" é a de quando o reset foi solto. Apertar o reset zera de novo.
 barToAlt #(
-    .INVERT(1'b0)
+    .INVERT(1'b1)
 ) barToAlt (
     .clk(clk25),
     .rst_n(rstN),
