@@ -124,7 +124,7 @@ Todo instrumento segue o mesmo caminho, em três etapas:
 
 O joystick do projeto é um módulo **analógico** (tipo KY-023 / HW-504), com 5 pinos: `GND`, `+5V`, `VRx`, `VRy` e `SW`. Ele não é SPI nem I2C. Cada eixo (`VRx` e `VRy`) é um potenciômetro que entrega uma **tensão**, e o `SW` é o botão de apertar.
 
-> **Status:** a ligação de hardware e o código de leitura (`xadcReader`, `xadcToJoy`, `joyToTarget`, `targetGen`) estão escritos e integrados ao `hudTop`. O projeto compila, mas o joystick ainda não foi testado na placa.
+> **Status:** a ligação de hardware e o código de leitura (`xadcReader`, `xadcToJoy`, `joyToTarget`, `targetGen`) estão escritos e integrados ao `hudTop`.
 
 ### Por que não liga direto na FPGA
 
