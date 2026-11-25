@@ -9,14 +9,12 @@
 // COMO FUNCIONA (5 passos)
 //  1) SINCRONIZAR: o xadcReader roda no clock de 100 MHz e este módulo no de 25 MHz. O valor passa por 2 registradores e só é aceito se
 //     duas leituras seguidas forem iguais (evita pegar um número "pela metade" no instante em que ele muda).
-//  1b) FILTRAR (tira o tremido), em duas etapas:
-//     - MÉDIA: em vez de pegar UMA leitura a cada 10 ms, soma o valor em todos os 2^18 ciclos (~10,5 ms) e divide por 2^18
-//       (dividir por potência de 2 = só pegar os bits de cima). Ruído rápido some na média.
-//     - SUAVIZAÇÃO (média móvel exponencial): a cada média nova, o valor filtrado anda 1/2^FILTER_SHIFT do caminho até ela.
-//       Com FILTER_SHIFT = 2 (1/4), a mira leva ~40 ms para chegar na posição: tira o tremido sem ficar "pesada".
-//       Ainda tremendo? Suba para 3 (mais liso, ~85 ms). Muito lenta? Baixe para 1.
-//  2) CALIBRAR O CENTRO: logo depois de ligar (ou do reset), espera ~0,5 s e depois tira a média de 64 leituras (~0,64 s).
-//     Essa média é o "centro" do seu joystick. POR ISSO: NÃO MEXA NO JOYSTICK ao ligar a placa ou apertar o reset.
+//  1b) FILTRAR (tira o tremido): um rastreador de MEDIANA. O valor filtrado anda um passo minúsculo por ciclo na direção da
+//     leitura. Fica estável onde está a maioria das leituras e ignora picos de ruído (que numa média puxariam a mira para um lado).
+//     Velocidade: STEP_LOG2 (10 = ~70 ms de ponta a ponta).
+//  2) CALIBRAR O CENTRO: logo depois de ligar (ou do reset), espera ~4 s (o vídeo do cartão começar) e depois tira a média de
+//     64 leituras (~0,7 s). Essa média é o "centro" do seu joystick. Até lá a mira fica parada no meio.
+//     POR ISSO: NÃO MEXA NO JOYSTICK por ~5 s depois de ligar a placa ou apertar o reset.
 //  3) CONVERTER: diferença = leitura - centro. Multiplica por GAIN_NUM/16 e soma 512. Limita entre 0 e 1023.
 //  4) AVISAR: a cada ~10,5 ms (depois de calibrado) dá um pulso de 1 ciclo em joyValid.
 
@@ -24,11 +22,14 @@ module xadcToJoy #(
     // Ganho = GAIN_NUM / 16. Com 5, o ganho é 0,3125: o joystick todo para um lado (~1690 de diferença) vira ~528, e o limite corta em 511.
     parameter int GAIN_NUM = 5,
 
-    parameter int SETTLE_READS = 50, // leituras ignoradas antes de calibrar (50 x 10,5 ms = ~0,5 s; dá tempo do filtro assentar)
+    // Leituras ignoradas antes de calibrar: 400 x 10,5 ms = ~4,2 s. É mais que antes (0,5 s) de propósito: assim o centro é
+    // medido com o vídeo do cartão já tocando. O cartão gera ruído no eixo X; calibrando antes dele começar, o centro
+    // ficava errado (mira solta caindo à direita).
+    parameter int SETTLE_READS = 400,
     parameter int CAL_LOG2 = 6, // a média do centro usa 2^6 = 64 leituras
 
-    parameter int AVG_LOG2 = 18, // a média usa 2^18 ciclos de 25 MHz = ~10,5 ms (é também o intervalo entre leituras: ~95 por segundo)
-    parameter int FILTER_SHIFT = 2 // suavização: anda 1/4 do caminho a cada leitura. Maior = mais liso e mais lento
+    parameter int TICK_LOG2 = 18, // intervalo entre leituras: 2^18 ciclos de 25 MHz = ~10,5 ms (~95 por segundo)
+    parameter int STEP_LOG2 = 10 // velocidade do filtro: 10 = ~70 ms de ponta a ponta. Ainda treme? 9 (mais liso, ~140 ms). Lento? 11 (~35 ms)
 )(
     input logic clk, // clock de 25 MHz
     input logic rst_n, // reset, ativo em 0
@@ -58,64 +59,43 @@ always_ff @(posedge clk or negedge rst_n) begin
 end
 
 // PASSO 1b - FILTRAR
-// Média: soma xStable em todos os ciclos da janela. No fim da janela (tick), média = soma / 2^AVG_LOG2.
-logic [AVG_LOG2 - 1:0] tickCnt;
+// Rastreador de MEDIANA: a cada ciclo, o valor filtrado dá um passo minúsculo na direção da leitura (sobe se a leitura
+// está acima, desce se está abaixo). Ele para onde metade das leituras fica acima e metade abaixo: a mediana.
+// Por que não média: no eixo X aparecem picos de ruído (era o "tremelique"). Na média, cada pico puxa o valor; na mediana,
+// um pico vale só "um voto", igual a qualquer outra leitura, então não desloca a mira.
+// est guarda o valor com 20 bits de fração: passo = 2^STEP_LOG2 / 2^20 por ciclo.
+// Com STEP_LOG2 = 10: ~24 mil contagens por segundo -> o joystick de ponta a ponta (~1700) em ~70 ms.
+logic [31:0] estX, estY; // valor filtrado x 2^20 (12 bits inteiros + 20 de fração)
+logic [11:0] xFilt, yFilt; // valor filtrado (0 a 4095): é o que o resto do módulo usa
+assign xFilt = estX[31:20];
+assign yFilt = estY[31:20];
+
+always_ff @(posedge clk or negedge rst_n) begin
+    if(!rst_n) begin
+        estX <= {12'd1690, 20'd0};
+        estY <= {12'd1690, 20'd0};
+    end else begin
+        // Não estoura: só sobe se a parte inteira < leitura <= 4095, e só desce se a parte inteira > leitura >= 0.
+        if(xStable > xFilt) estX <= estX + (32'd1 << STEP_LOG2);
+        else if(xStable < xFilt) estX <= estX - (32'd1 << STEP_LOG2);
+        if(yStable > yFilt) estY <= estY + (32'd1 << STEP_LOG2);
+        else if(yStable < yFilt) estY <= estY - (32'd1 << STEP_LOG2);
+    end
+end
+
+// Pulso "leitura nova" a cada 2^TICK_LOG2 ciclos (~10,5 ms)
+logic [TICK_LOG2 - 1:0] tickCnt;
 logic tick;
-logic [AVG_LOG2 + 11:0] accX, accY; // somas da janela
-logic [11:0] avgX, avgY; // média da última janela (0 a 4095)
 
 always_ff @(posedge clk or negedge rst_n) begin
     if(!rst_n) begin
         tickCnt <= '0;
         tick <= 1'b0;
-        accX <= '0;
-        accY <= '0;
-        avgX <= 12'd1690;
-        avgY <= 12'd1690;
     end else begin
-        tickCnt <= tickCnt + 1'b1; // volta sozinho para 0 depois de 2^AVG_LOG2 ciclos
-        if(&tickCnt) begin // último ciclo da janela
-            avgX <= 12'((accX + xStable) >> AVG_LOG2);
-            avgY <= 12'((accY + yStable) >> AVG_LOG2);
-            accX <= '0;
-            accY <= '0;
-            tick <= 1'b1;
-        end else begin
-            accX <= accX + xStable;
-            accY <= accY + yStable;
-            tick <= 1'b0;
-        end
+        tickCnt <= tickCnt + 1'b1; // volta sozinho para 0
+        tick <= &tickCnt;
     end
 end
-
-// Suavização: filt guarda o valor com 4 bits de fração (x16), para os passos pequenos não se perderem no arredondamento.
-// Roda 1 ciclo depois do tick (avg já atualizado); o resto do módulo usa o valor no tick seguinte.
-logic [15:0] filtX, filtY; // valor filtrado x 16
-logic signed [17:0] stepX, stepY;
-logic [11:0] xFilt, yFilt; // valor filtrado (0 a 4095): é o que o resto do módulo usa
-
-always_comb begin
-    stepX = ($signed({2'b00, avgX, 4'b0}) - $signed({2'b00, filtX})) >>> FILTER_SHIFT;
-    stepY = ($signed({2'b00, avgY, 4'b0}) - $signed({2'b00, filtY})) >>> FILTER_SHIFT;
-end
-
-logic tickD; // tick atrasado 1 ciclo
-always_ff @(posedge clk or negedge rst_n) begin
-    if(!rst_n) begin
-        tickD <= 1'b0;
-        filtX <= {12'd1690, 4'b0};
-        filtY <= {12'd1690, 4'b0};
-    end else begin
-        tickD <= tick;
-        if(tickD) begin
-            filtX <= 16'($signed({2'b00, filtX}) + stepX);
-            filtY <= 16'($signed({2'b00, filtY}) + stepY);
-        end
-    end
-end
-
-assign xFilt = filtX[15:4];
-assign yFilt = filtY[15:4];
 
 // PASSO 2 - CALIBRAR O CENTRO (já com o valor filtrado)
 typedef enum logic [1:0] {SETTLE, CAL, RUN} state_t;
