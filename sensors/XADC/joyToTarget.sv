@@ -22,6 +22,8 @@ module joyToTarget #(
 
     parameter int DEADZONE = 12, // zona morta: até 12 de distância do centro (512), a leitura vale 512.
 
+    parameter int HYST = 2, // histerese: a mira só anda se a posição nova estiver a 2 pixels ou mais da atual. Tira o "pisca" de 1 pixel.
+
     parameter int MARGIN = 20, // distância mínima da mira até a borda da tela, em pixels (o desenho da mira precisa de espaço)
 
     parameter bit LOCK_TOGGLE = 1'b1, // 1 = cada aperto do gatilho liga/desliga a trava. 0 = trava SÓ enquanto o gatilho estiver apertado.
@@ -111,6 +113,16 @@ always_comb begin
     end
 end
 
+// Histerese: só anda se a diferença for de HYST pixels ou mais
+logic moveX, moveY;
+always_comb begin
+    moveX = (wantX >= targetX) ? (wantX - targetX >= 10'(HYST)) : (targetX - wantX >= 10'(HYST));
+    moveY = (wantY >= targetY) ? (wantY - targetY >= 10'(HYST)) : (targetY - wantY >= 10'(HYST));
+    // Joystick solto (zona morta): sempre volta para o meio exato, mesmo que falte só 1 pixel
+    if(wantX == 10'((H_LAST + 1) / 2)) moveX = 1'b1;
+    if(wantY == 10'((V_LAST + 1) / 2)) moveY = 1'b1;
+end
+
 always_ff @(posedge clk or negedge rst_n) begin
     if(!rst_n) begin
         targetX <= 10'((H_LAST + 1) / 2); // começa no meio da tela
@@ -126,9 +138,10 @@ always_ff @(posedge clk or negedge rst_n) begin
         else if(lockoutCnt != 0) lockoutCnt <= lockoutCnt - 1'b1;
 
         // Se a mira vai ficar travada (inclusive nesta leitura), NÃO anda. Assim, apertar o gatilho não empurra a mira junto.
+        // Histerese: diferença menor que HYST pixels é tremido, a mira fica onde está.
         if(!lockNext) begin
-            targetX <= wantX;
-            targetY <= wantY;
+            if(moveX) targetX <= wantX;
+            if(moveY) targetY <= wantY;
         end
     end
 end
